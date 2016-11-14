@@ -1,6 +1,6 @@
-# Intel&reg; RealSense&trade; ROS Applications
-These are application packages desgined for for use with
-Intel RealSense cameras under  ROS.  
+# Intel&reg; RealSense&trade; ROS Person
+Person detection and tracking package designed for for use with
+Intel RealSense cameras under ROS.
 
 http://www.intel.com/realsense
 
