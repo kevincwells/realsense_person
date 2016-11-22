@@ -1,0 +1,7 @@
+int32 tracking_id
+---
+int32 status
+string status_desc
+int32 recognition_id
+float32 confidence
+

@@ -1,0 +1,4 @@
+geometry_msgs/Point world
+int32 world_confidence
+geometry_msgs/Point image
+int32 image_confidence

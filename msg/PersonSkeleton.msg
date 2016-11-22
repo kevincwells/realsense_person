@@ -1,0 +1,3 @@
+string joint_type
+realsense_person/RegisteredPoint skeleton_point
+
