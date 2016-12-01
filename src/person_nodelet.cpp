@@ -45,7 +45,13 @@ namespace realsense_person
     projection_interface_ = nullptr;
     caminfo_disconnected_ = false;
     tracking_id_ = -1;
-    last_publish_time_ = 0;
+    current_time_ = 0.0;
+    last_detection_time_ = 0.0;
+    last_tracking_time_ = 0.0;
+    publish_detection_ = false;
+    publish_detection_image_ = false;
+    publish_tracking_ = false;
+    publish_tracking_image_ = false;
   }
 
   /*
@@ -79,8 +85,7 @@ namespace realsense_person
     nodelet_name_ = getName();
     nh_ = getNodeHandle();
     pnh_ = getPrivateNodeHandle();
-    pnh_.param("color_fps", color_fps_, COLOR_FPS);
-    pnh_.param("depth_fps", depth_fps_, DEPTH_FPS);
+    pnh_.param("subscribe_rate", subscribe_rate_, SUBSCRIBE_RATE);
   }
 
   /*
@@ -99,6 +104,9 @@ namespace realsense_person
   {
     ROS_INFO_STREAM(nodelet_name_ << " - Setting detection rate to " << config.detection_rate);
     detection_rate_ = config.detection_rate;
+
+    ROS_INFO_STREAM(nodelet_name_ << " - Setting tracking rate to " << config.tracking_rate);
+    tracking_rate_ = config.tracking_rate;
 
     if ((config.enable_recognition) &&
         (!pt_video_module_->QueryConfiguration()->QueryRecognition()->IsEnabled()))
@@ -285,8 +293,8 @@ namespace realsense_person
 
     RSCore::video_module_interface::actual_module_config module_config = {};
 
-    setModuleConfig(static_cast<int>(RSCore::stream_type::color), color_fps_, color_intrinsics, module_config);
-    setModuleConfig(static_cast<int>(RSCore::stream_type::depth), depth_fps_, depth_intrinsics, module_config);
+    setModuleConfig(static_cast<int>(RSCore::stream_type::color), color_intrinsics, module_config);
+    setModuleConfig(static_cast<int>(RSCore::stream_type::depth), depth_intrinsics, module_config);
 
     module_config.projection = RSCore::projection_interface::create_instance(&color_intrinsics,
         &depth_intrinsics, &extrinsics);
@@ -330,12 +338,12 @@ namespace realsense_person
   /*
    * Set Video Module Interface configuration.
    */
-  void PersonNodelet::setModuleConfig(int image_type, int image_fps, RSCore::intrinsics intrinsics,
+  void PersonNodelet::setModuleConfig(int image_type, RSCore::intrinsics intrinsics,
       RSCore::video_module_interface::actual_module_config& module_config)
   {
     module_config.image_streams_configs[image_type].size.height = intrinsics.height;
     module_config.image_streams_configs[image_type].size.width = intrinsics.width;
-    module_config.image_streams_configs[image_type].frame_rate = image_fps;
+    module_config.image_streams_configs[image_type].frame_rate = subscribe_rate_;
     module_config.image_streams_configs[image_type].is_enabled = true;
   }
 
@@ -362,14 +370,22 @@ namespace realsense_person
 
     processFrame(sample_set);
 
-    double now = (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
-                  / 1000.00);
-    bool has_subscribers = ((detection_pub_.getNumSubscribers() > 0) || (detection_image_pub_.getNumSubscribers() > 0)
-        || (tracking_pub_.getNumSubscribers() > 0) || (tracking_image_pub_.getNumSubscribers() > 0));
+    current_time_ = (std::chrono::duration_cast<std::chrono::milliseconds>
+        (std::chrono::system_clock::now().time_since_epoch()).count() / 1000.00);
+    int current_detection_rate = 1.0 / (double)(current_time_ - last_detection_time_);
+    int current_tracking_rate = 1.0 / (double)(current_time_ - last_tracking_time_);
 
-    if ((has_subscribers) && (detection_rate_ > 0) && ((now - last_publish_time_) >= (1.0 / detection_rate_)))
+    publish_detection_ = ((detection_pub_.getNumSubscribers() > 0) &&
+        (current_detection_rate <= detection_rate_));
+    publish_detection_image_ = ((detection_image_pub_.getNumSubscribers() > 0) &&
+        (current_detection_rate <= detection_rate_));
+    publish_tracking_ = ((tracking_pub_.getNumSubscribers() > 0) &&
+        (current_tracking_rate <= tracking_rate_));
+    publish_tracking_image_ = ((tracking_image_pub_.getNumSubscribers() > 0) &&
+        (current_tracking_rate <= tracking_rate_));
+
+    if (publish_detection_ || publish_detection_image_ || publish_tracking_ || publish_tracking_image_)
     {
-      last_publish_time_ = now;
       auto person_data = getPersonData();
       if (!person_data)
       {
@@ -377,10 +393,11 @@ namespace realsense_person
       }
       else
       {
-        prepareMsgs(person_data, color_image);
+        prepareMsgs(person_data, color_image, current_time_);
       }
     }
 
+    // Disconnect Camera Info callback after it has been processed once
     if (caminfo_disconnected_ == false)
     {
       caminfo_connection_.disconnect();
@@ -425,124 +442,97 @@ namespace realsense_person
   }
 
   /*
-   * Publish Topics.
+   * Prepare and publish messages.
    */
   void PersonNodelet::prepareMsgs(PersonModule::PersonTrackingData* person_data,
-      const sensor_msgs::ImageConstPtr& color_image)
+      const sensor_msgs::ImageConstPtr& color_image, double msg_received_time)
   {
-    int detected_person_cnt = person_data->QueryNumberOfPeople();
-
-    int detection_sub_cnt = detection_pub_.getNumSubscribers();
-    int detection_image_sub_cnt = detection_image_pub_.getNumSubscribers();
-    int tracking_sub_cnt = tracking_pub_.getNumSubscribers();
-    int tracking_image_sub_cnt = tracking_image_pub_.getNumSubscribers();
-
     PersonDetection detection_msg;
-    cv_bridge::CvImagePtr detection_cv_img_ptr;
     PersonTracking tracking_msg;
-    cv_bridge::CvImagePtr tracking_cv_img_ptr;
     ros::Time header_stamp = ros::Time::now();
 
-    if (detection_sub_cnt > 0)
+    int detected_person_cnt = person_data->QueryNumberOfPeople();
+    if (detected_person_cnt > 0)
+    {
+      for (int i = 0; i < detected_person_cnt; ++i)
+      {
+        PersonModule::PersonTrackingData::Person* single_person_data =
+            person_data->QueryPersonData(PersonModule::PersonTrackingData::ACCESS_ORDER_BY_ID, i);
+        PersonModule::PersonTrackingData::PersonTracking* detection_data = single_person_data->QueryTracking();
+        int tracking_id = detection_data->QueryId();
+        PersonModule::PersonTrackingData::BoundingBox2D b_box = detection_data->Query2DBoundingBox();
+        PersonModule::PersonTrackingData::PointCombined com = detection_data->QueryCenterMass();
+        Person person_msg = preparePersonMsg(tracking_id, b_box, com);
+
+        if (publish_detection_ || publish_detection_image_)
+        {
+          last_detection_time_ = msg_received_time;
+          detection_msg.persons.push_back(person_msg);
+        }
+
+        if ((publish_tracking_ || publish_tracking_image_) && (tracking_id_ == tracking_id))
+        {
+          last_tracking_time_ = msg_received_time;
+          tracking_msg.person = person_msg;
+          tracking_msg.person_face = preparePersonFaceMsg(tracking_id_, detection_data, single_person_data);
+          tracking_msg.person_body = preparePersonBodyMsg(tracking_id_, single_person_data);
+        }
+      }
+    }
+
+    // Publish Detection message
+    if (publish_detection_)
     {
       detection_msg.header.stamp = header_stamp;
       detection_msg.header.frame_id = DETECTION_FRAME_ID;
       detection_msg.detected_person_count = detected_person_cnt;
-    }
-
-    if (detection_image_sub_cnt > 0)
-    {
-      try
-      {
-        detection_cv_img_ptr = cv_bridge::toCvCopy(color_image);
-      }
-      catch(cv_bridge::Exception& e)
-      {
-        ROS_ERROR_STREAM(nodelet_name_ << " - Error converting color_msg to cv: " << e.what());
-        detection_image_sub_cnt = 0; //disable further operations
-      }
-    }
-
-    if (tracking_sub_cnt > 0)
-    {
-      tracking_msg.header.stamp = header_stamp;
-      tracking_msg.header.frame_id = TRACKING_FRAME_ID;
-    }
-
-    if (tracking_image_sub_cnt > 0)
-    {
-      try
-      {
-        tracking_cv_img_ptr = cv_bridge::toCvCopy(color_image);
-      }
-      catch(cv_bridge::Exception& e)
-      {
-        ROS_ERROR_STREAM(nodelet_name_ << " - Error converting color_msg to cv: " << e.what());
-        tracking_image_sub_cnt = 0; //disable further operations
-      }
-    }
-
-    for (int i = 0; i < detected_person_cnt; ++i)
-    {
-      PersonModule::PersonTrackingData::Person* single_person_data =
-          person_data->QueryPersonData(PersonModule::PersonTrackingData::ACCESS_ORDER_BY_ID, i);
-      PersonModule::PersonTrackingData::PersonTracking* detection_data = single_person_data->QueryTracking();
-      int tracking_id = detection_data->QueryId();
-      PersonModule::PersonTrackingData::BoundingBox2D b_box = detection_data->Query2DBoundingBox();
-      PersonModule::PersonTrackingData::PointCombined com = detection_data->QueryCenterMass();
-
-      if ((detection_sub_cnt > 0) || (detection_image_sub_cnt > 0))
-      {
-        Person person_msg = preparePersonMsg(tracking_id, b_box, com);
-        if (detection_sub_cnt > 0)
-        {
-          detection_msg.persons.push_back(person_msg);
-        }
-        if (detection_image_sub_cnt > 0)
-        {
-          preparePersonImageMsg(person_msg, detection_cv_img_ptr);
-        }
-      }
-
-      if ((tracking_sub_cnt > 0) || (tracking_image_sub_cnt > 0))
-      {
-        if (tracking_id_ == tracking_id)
-        {
-          tracking_msg.person = preparePersonMsg(tracking_id_, b_box, com);
-          tracking_msg.person_face = preparePersonFaceMsg(tracking_id_, detection_data, single_person_data);
-          tracking_msg.person_body = preparePersonBodyMsg(tracking_id_, single_person_data);
-          if (tracking_image_sub_cnt > 0)
-          {
-            prepareTrackingImageMsg(tracking_msg, tracking_cv_img_ptr);
-          }
-        }
-      }
-    }
-
-    if (detection_sub_cnt > 0)
-    {
       detection_pub_.publish(detection_msg);
     }
 
-    if (detection_image_sub_cnt > 0)
+    // Publish Tracking message
+    if (publish_tracking_)
     {
-      sensor_msgs::ImagePtr detection_image_msg = detection_cv_img_ptr->toImageMsg();
-      detection_image_msg->header.frame_id = DETECTION_IMAGE_FRAME_ID;
-      detection_image_msg->header.stamp = header_stamp;
-      detection_image_pub_.publish(detection_image_msg);
-    }
-
-    if (tracking_sub_cnt > 0)
-    {
+      tracking_msg.header.stamp = header_stamp;
+      tracking_msg.header.frame_id = TRACKING_FRAME_ID;
       tracking_pub_.publish(tracking_msg);
     }
 
-    if (tracking_image_sub_cnt > 0)
+    // Publish Detection Image message
+    if (publish_detection_image_)
     {
-      sensor_msgs::ImagePtr tracking_image_msg = tracking_cv_img_ptr->toImageMsg();
-      tracking_image_msg->header.frame_id = TRACKING_IMAGE_FRAME_ID;
-      tracking_image_msg->header.stamp = header_stamp;
-      tracking_image_pub_.publish(tracking_image_msg);
+      try
+      {
+        cv_bridge::CvImagePtr detection_cv_img_ptr;
+        detection_cv_img_ptr = cv_bridge::toCvCopy(color_image);
+        prepareDetectionImageMsg(detection_msg, detection_cv_img_ptr);
+        sensor_msgs::ImagePtr detection_image_msg = detection_cv_img_ptr->toImageMsg();
+        detection_image_msg->header.stamp = header_stamp;
+        detection_image_msg->header.frame_id = DETECTION_IMAGE_FRAME_ID;
+        detection_image_pub_.publish(detection_image_msg);
+      }
+      catch(cv_bridge::Exception& e)
+      {
+        ROS_ERROR_STREAM(nodelet_name_ << " - Error converting color_msg to cv: " << e.what());
+      }
+    }
+
+    // Publish Tracking Image message
+    if (publish_tracking_image_)
+    {
+      try
+      {
+        cv_bridge::CvImagePtr tracking_cv_img_ptr;
+        tracking_cv_img_ptr = cv_bridge::toCvCopy(color_image);
+        prepareTrackingImageMsg(tracking_msg, tracking_cv_img_ptr);
+        sensor_msgs::ImagePtr tracking_image_msg = tracking_cv_img_ptr->toImageMsg();
+        tracking_image_msg->header.stamp = header_stamp;
+        tracking_image_msg->header.frame_id = TRACKING_IMAGE_FRAME_ID;
+        tracking_image_pub_.publish(tracking_image_msg);
+      }
+      catch(cv_bridge::Exception& e)
+      {
+        ROS_ERROR_STREAM(nodelet_name_ << " - Error converting color_msg to cv: " << e.what());
+      }
     }
   }
 
@@ -582,30 +572,32 @@ namespace realsense_person
   }
 
   /*
-   * Prepare PersonImage Message.
+   * Prepare DetectionImage Message.
    */
-  void PersonNodelet::preparePersonImageMsg(Person person_msg, cv_bridge::CvImagePtr& cv_ptr)
+  void PersonNodelet::prepareDetectionImageMsg(PersonDetection detection_msg, cv_bridge::CvImagePtr& cv_ptr)
   {
     auto color = cv::Scalar(0, 255, 0); // green
-
-    cv::rectangle(cv_ptr->image, cv::Rect(person_msg.bounding_box.x, person_msg.bounding_box.y,
-        (person_msg.bounding_box.x + person_msg.bounding_box.w),
-        (person_msg.bounding_box.y + person_msg.bounding_box.h)), color, 3);
-    cv::circle(cv_ptr->image, cv::Point(person_msg.center_of_mass.image.x,
-        person_msg.center_of_mass.image.y), 5, color, 3);
-
-    std::stringstream id;
-    id << "tid: " << person_msg.person_id.tracking_id;
-
-    /* TODO: Get the real recognition id from the db once that feature is implemented in the next release.
-    if (person_msg.person_id.recognition_id >= 0)
+    for (Person person_msg: detection_msg.persons)
     {
-      id << ", rid: " << person_msg.person_id.recognition_id;
-    }
-    */
+      cv::rectangle(cv_ptr->image, cv::Rect(person_msg.bounding_box.x, person_msg.bounding_box.y,
+          (person_msg.bounding_box.x + person_msg.bounding_box.w),
+          (person_msg.bounding_box.y + person_msg.bounding_box.h)), color, 3);
+      cv::circle(cv_ptr->image, cv::Point(person_msg.center_of_mass.image.x,
+          person_msg.center_of_mass.image.y), 5, color, 3);
 
-    cv::putText(cv_ptr->image, id.str(), cv::Point(person_msg.bounding_box.x, person_msg.bounding_box.y),
-        cv::FONT_HERSHEY_PLAIN, 3, color);
+      std::stringstream id;
+      id << "tid: " << person_msg.person_id.tracking_id;
+
+      /* TODO: Get the real recognition id from the db once that feature is implemented in the next release.
+      if (person_msg.person_id.recognition_id >= 0)
+      {
+        id << ", rid: " << person_msg.person_id.recognition_id;
+      }
+      */
+
+      cv::putText(cv_ptr->image, id.str(), cv::Point(person_msg.bounding_box.x, person_msg.bounding_box.y),
+          cv::FONT_HERSHEY_PLAIN, 3, color);
+    }
   }
 
   /*

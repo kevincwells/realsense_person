@@ -25,9 +25,9 @@
   <arg name="color_height"      default="480" />
   <arg name="depth_width"       default="480" />
   <arg name="depth_height"      default="360" />
-  <arg name="color_fps"         default="30" />
-  <arg name="depth_fps"         default="30" />
+  <arg name="subscribe_rate"    default="30" />
   <arg name="detection_rate"    default="30" />
+  <arg name="tracking_rate"     default="30" />
 
   <group ns="$(arg camera)">
     <arg name="manager"        default="manager" />
@@ -42,8 +42,8 @@
     <param name="driver/color_height"   type="int"  value="$(arg color_height)" />
     <param name="driver/depth_width"    type="int"  value="$(arg depth_width)" />
     <param name="driver/depth_height"   type="int"  value="$(arg depth_height)" />
-    <param name="driver/color_fps"      type="int"  value="$(arg color_fps)" />
-    <param name="driver/depth_fps"      type="int"  value="$(arg depth_fps)" />
+    <param name="driver/color_fps"      type="int"  value="$(arg subscribe_rate)" />
+    <param name="driver/depth_fps"      type="int"  value="$(arg subscribe_rate)" />
     <include file="$(find realsense_camera)/launch/includes/nodelet.launch.xml">
       <arg name="manager"       value="$(arg manager)" />
       <arg name="camera_type"   value="$(arg camera_type)" />
@@ -54,9 +54,9 @@
     </include>
 
     <!-- Load person -->
-    <param name="$(arg person)/color_fps"        type="int"  value="$(arg color_fps)" />
-    <param name="$(arg person)/depth_fps"        type="int"  value="$(arg depth_fps)" />
+    <param name="$(arg person)/subscribe_rate"   type="int"  value="$(arg subscribe_rate)" />
     <param name="$(arg person)/detection_rate"   type="int"  value="$(arg detection_rate)" />
+    <param name="$(arg person)/tracking_rate"    type="int"  value="$(arg tracking_rate)" />
     <include file="$(find realsense_person)/launch/includes/nodelet.launch.xml">
       <arg name="manager"       value="$(arg manager)" />
       <arg name="rgb"           value="$(arg rgb)" />

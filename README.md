@@ -50,7 +50,7 @@ this project or the open source license(s) involved.
 
 Install the package and its dependent packages as follows:
  - Clone the repo in the `src` directory of your catkin workspace.
- - Install the dependent packages using the command `rosdep install realsense_person`.
+ - Install the dependent packages using the command `rosdep install --from-paths src/realsense_person`.
  - Build the package using the command `catkin_make`.
  - Validate the installation by running one of the launch files.
 
@@ -98,18 +98,18 @@ Install the package and its dependent packages as follows:
    Saves a new set of descriptor features for the specified person.
 
 ###Static Parameters
-`color_fps` (default: 30)
+`subscribe_rate` (default: 30)
 
-   Controls the subscription rate of the color topic.
-
-`depth_fps` (default: 30)
-
-   Controls the subscription rate of the depth topic.
+   Controls the subscription rate of the color and depth topics.
 
 ###Dynamic Parameters
 `detection_rate` (default: 30)
 
    Controls the publish rate of the detection topics.
+
+`tracking_rate` (default: 30)
+
+   Controls the publish rate of the tracking topics.
 
 `enable_recognition` (default: true)
 
