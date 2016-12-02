@@ -46,8 +46,9 @@ this project or the open source license(s) involved.
 ##Building this Package from Source:
 <b>Note:</b> ROS beginners, please ensure that the basic ROS environment and catkin workspace has been set up by following the instructions at http://wiki.ros.org/ROS/Installation.
 
-1. Install the compatible PersonTracking library and its dependencies from https://github.intel.com/mcurfman/realsense_scripts.git
-2. Install the package and its dependent packages as follows:
+<b>Prerequisite:</b>Successful build and use of thus ROS package assumes you have already installed the Beta2 Person-Tracking Middleware.
+
+Install the package and its dependent packages as follows:
  - Clone the repo in the `src` directory of your catkin workspace.
  - Install the dependent packages using the command `rosdep install realsense_person`.
  - Build the package using the command `catkin_make`.
