@@ -69,6 +69,7 @@
 
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/opencv.hpp>
+#include <mutex>
 
 
 namespace PersonModule = Intel::RealSense::PersonTracking;
@@ -109,6 +110,7 @@ namespace realsense_person
     RSCore::projection_interface* projection_interface_;
     RSCore::correlated_sample_set sample_set_;
     std::unique_ptr<PersonModuleInterface::person_tracking_video_module_interface> pt_video_module_;
+    PersonModule::PersonTrackingData* person_data_;
 
     ros::ServiceServer tracking_id_server_;
     ros::ServiceServer register_server_;
@@ -125,6 +127,7 @@ namespace realsense_person
     ros::Publisher tracking_image_pub_;
 
     boost::shared_ptr<dynamic_reconfigure::Server<realsense_person::person_paramsConfig>> dynamic_reconf_server_;
+    std::mutex frame_lock_;
 
     virtual bool getTrackingIdServiceHandler(realsense_person::GetTrackingId::Request &req,
         realsense_person::GetTrackingId::Response &res);
