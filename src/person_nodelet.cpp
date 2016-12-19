@@ -356,11 +356,11 @@ namespace realsense_person
   void PersonNodelet::imageCallback(const sensor_msgs::ImageConstPtr& color_image,
       const sensor_msgs::ImageConstPtr& depth_image)
   {
-    std::unique_lock<std::mutex> lock(frame_lock_);
-    generateSampleSet(RSCore::stream_type::color, RSCore::pixel_format::rgb8, color_image);
-    generateSampleSet(RSCore::stream_type::depth, RSCore::pixel_format::z16, depth_image);
+    RSCore::correlated_sample_set sample_set;
+    generateSampleSet(RSCore::stream_type::color, RSCore::pixel_format::rgb8, color_image, sample_set);
+    generateSampleSet(RSCore::stream_type::depth, RSCore::pixel_format::z16, depth_image, sample_set);
 
-    person_data_ = processFrame();
+    setPersonData(sample_set);
 
     double now = (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
                   / 1000.00);
@@ -370,9 +370,10 @@ namespace realsense_person
     if ((has_subscribers) && (detection_rate_ > 0) && ((now - last_publish_time_) >= (1.0 / detection_rate_)))
     {
       last_publish_time_ = now;
-      if (person_data_)
+      auto person_data = getPersonData();
+      if (person_data)
       {
-        prepareMsgs(person_data_, color_image);
+        prepareMsgs(person_data, color_image);
       }
     }
 
@@ -387,37 +388,44 @@ namespace realsense_person
    * Generate sample set.
    */
   void PersonNodelet::generateSampleSet(RSCore::stream_type image_type, RSCore::pixel_format image_format,
-      const sensor_msgs::ImageConstPtr& image)
+      const sensor_msgs::ImageConstPtr& image, RSCore::correlated_sample_set &sample_set)
   {
     RSCore::image_info image_info = {static_cast<int32_t>(image->width), static_cast<int32_t>(image->height),
         image_format, image->step};
-    sample_set_[image_type] = RSCore::image_interface::create_instance_from_raw_data(&image_info,
+    sample_set[image_type] = RSCore::image_interface::create_instance_from_raw_data(&image_info,
         RSCore::image_interface::image_data_with_data_releaser(image->data.data(), nullptr),
         RSCore::stream_type::color, RSCore::image_interface::flag::any, 0, 0, nullptr);
   }
 
   /*
-   * Process frame.
+   * Set Person Data.
    */
-  PersonModule::PersonTrackingData* PersonNodelet::processFrame()
+  void PersonNodelet::setPersonData(RSCore::correlated_sample_set sample_set)
   {
-    auto status = pt_video_module_->process_sample_set_sync(&sample_set_);
+    std::unique_lock<std::mutex> lock(frame_lock_);
+    auto status = pt_video_module_->process_sample_set_sync(&sample_set);
 
     if (status != RSCore::status::status_no_error)
     {
-      ROS_ERROR_STREAM(nodelet_name_ << " - Error while processing frame: " << status);
-      return nullptr;
+      ROS_ERROR_STREAM(nodelet_name_ << " - Error while processing input frames: " << status);
+      person_data_ = nullptr;
     }
 
-    PersonModule::PersonTrackingData* person_data = pt_video_module_->QueryOutput();
+    person_data_ = pt_video_module_->QueryOutput();
 
-    if (!person_data)
+    if (!person_data_)
     {
       ROS_ERROR_STREAM(nodelet_name_ << " - No person data");
-      return nullptr;
     }
+  }
 
-    return person_data;
+  /*
+   * Get Person Data.
+   */
+  PersonModule::PersonTrackingData* PersonNodelet::getPersonData()
+  {
+    std::unique_lock<std::mutex> lock(frame_lock_);
+    return person_data_;
   }
 
   /*
@@ -641,15 +649,15 @@ namespace realsense_person
   bool PersonNodelet::getTrackingIdServiceHandler(realsense_person::GetTrackingId::Request &req,
       realsense_person::GetTrackingId::Response &res)
   {
-    std::unique_lock<std::mutex> lock(frame_lock_);
     ROS_INFO_STREAM(nodelet_name_ << " - Calling service: " << GET_TRACKING_ID_SERVICE);
+    auto person_data = getPersonData();
 
-    int detected_person_cnt = person_data_->QueryNumberOfPeople();
+    int detected_person_cnt = person_data->QueryNumberOfPeople();
     res.detected_person_count = detected_person_cnt;
     for (int i = 0; i < detected_person_cnt; ++i)
     {
       PersonModule::PersonTrackingData::Person* single_person_data =
-          person_data_->QueryPersonData(PersonModule::PersonTrackingData::ACCESS_ORDER_BY_ID, i);
+          person_data->QueryPersonData(PersonModule::PersonTrackingData::ACCESS_ORDER_BY_ID, i);
       PersonModule::PersonTrackingData::PersonTracking* detection_data = single_person_data->QueryTracking();
       int tracking_id = detection_data->QueryId();
       res.tracking_ids.push_back(tracking_id);
@@ -663,9 +671,9 @@ namespace realsense_person
   bool PersonNodelet::startTrackingServiceHandler(realsense_person::StartTracking::Request &req,
       realsense_person::StartTracking::Response &res)
   {
-    std::unique_lock<std::mutex> lock(frame_lock_);
     ROS_INFO_STREAM(nodelet_name_ << " - Calling service: " << START_TRACKING_SERVICE);
-    if (!person_data_)
+    auto person_data = getPersonData();
+    if (!person_data)
     {
       res.status = -1;
       res.status_desc = "Could not start tracking";
@@ -675,7 +683,8 @@ namespace realsense_person
       tracking_id_ = req.tracking_id;
       pt_video_module_->QueryConfiguration()->QueryTracking()->Enable();
       pt_video_module_->QueryConfiguration()->QueryTracking()->EnableFaceLandmarks();
-      person_data_->StartTracking(tracking_id_);
+      auto person_data = getPersonData();
+      person_data->StartTracking(tracking_id_);
       res.status = 0;
       res.status_desc = "Started tracking person with tracking_id " + std::to_string(tracking_id_);
     }
@@ -688,16 +697,16 @@ namespace realsense_person
   bool PersonNodelet::stopTrackingServiceHandler(realsense_person::StopTracking::Request &req,
       realsense_person::StopTracking::Response &res)
   {
-    std::unique_lock<std::mutex> lock(frame_lock_);
     ROS_INFO_STREAM(nodelet_name_ << " - Calling service: " << STOP_TRACKING_SERVICE);
-    if (!person_data_)
+    auto person_data = getPersonData();
+    if (!person_data)
     {
       res.status = -1;
       res.status_desc = "Could not stop tracking";
     }
     else
     {
-      person_data_->StopTracking(tracking_id_);
+      person_data->StopTracking(tracking_id_);
       res.status = 0;
       res.status_desc = "Stopped tracking person with tracking_id " + std::to_string(tracking_id_);
     }
@@ -710,7 +719,6 @@ namespace realsense_person
   bool PersonNodelet::registerServiceHandler(realsense_person::Register::Request &req,
       realsense_person::Register::Response &res)
   {
-    std::unique_lock<std::mutex> lock(frame_lock_);
     ROS_INFO_STREAM(nodelet_name_ << " - Calling service: " << REGISTER_SERVICE);
     res.status = -1;
     res.recognition_id = -1;
@@ -721,7 +729,8 @@ namespace realsense_person
     }
     else
     {
-      auto person = person_data_->QueryPersonDataById(req.tracking_id);
+      auto person_data = getPersonData();
+      auto person = person_data->QueryPersonDataById(req.tracking_id);
 
       if (!person)
       {
@@ -744,7 +753,6 @@ namespace realsense_person
   bool PersonNodelet::recognizeServiceHandler(realsense_person::Recognize::Request &req,
       realsense_person::Recognize::Response &res)
   {
-    std::unique_lock<std::mutex> lock(frame_lock_);
     ROS_INFO_STREAM(nodelet_name_ << " - Calling service: " << RECOGNIZE_SERVICE);
     if (!pt_video_module_->QueryConfiguration()->QueryRecognition()->IsEnabled())
     {
@@ -755,7 +763,8 @@ namespace realsense_person
     }
     else
     {
-      auto person = person_data_->QueryPersonDataById(req.tracking_id);
+      auto person_data = getPersonData();
+      auto person = person_data->QueryPersonDataById(req.tracking_id);
 
       if (!person)
       {
@@ -782,7 +791,6 @@ namespace realsense_person
   bool PersonNodelet::reinforceServiceHandler(realsense_person::Reinforce::Request &req,
       realsense_person::Reinforce::Response &res)
   {
-    std::unique_lock<std::mutex> lock(frame_lock_);
     ROS_INFO_STREAM(nodelet_name_ << " - Calling service: " << REINFORCE_SERVICE);
     if (!pt_video_module_->QueryConfiguration()->QueryRecognition()->IsEnabled())
     {
@@ -791,7 +799,8 @@ namespace realsense_person
     }
     else
     {
-      auto person = person_data_->QueryPersonDataById(req.tracking_id);
+      auto person_data = getPersonData();
+      auto person = person_data->QueryPersonDataById(req.tracking_id);
 
       if (!person)
       {
