@@ -109,7 +109,6 @@ namespace realsense_person
 
     RSCore::projection_interface* projection_interface_;
     std::unique_ptr<PersonModuleInterface::person_tracking_video_module_interface> pt_video_module_;
-    PersonModule::PersonTrackingData* person_data_; // Always access this variable only using getPersonData()
 
     ros::ServiceServer tracking_id_server_;
     ros::ServiceServer register_server_;
@@ -161,7 +160,7 @@ namespace realsense_person
     void imageCallback(const sensor_msgs::ImageConstPtr& color_image, const sensor_msgs::ImageConstPtr& depth_image);
     void generateSampleSet(RSCore::stream_type image_type, RSCore::pixel_format image_format,
         const sensor_msgs::ImageConstPtr& image, RSCore::correlated_sample_set &sample_set);
-    void setPersonData(RSCore::correlated_sample_set sample_set);
+    void processFrame(RSCore::correlated_sample_set sample_set);
     PersonModule::PersonTrackingData* getPersonData();
     void prepareMsgs(PersonModule::PersonTrackingData* person_data, const sensor_msgs::ImageConstPtr& color_image);
     Person preparePersonMsg(int tracking_id, PersonModule::PersonTrackingData::BoundingBox2D b_box,

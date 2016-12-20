@@ -360,7 +360,7 @@ namespace realsense_person
     generateSampleSet(RSCore::stream_type::color, RSCore::pixel_format::rgb8, color_image, sample_set);
     generateSampleSet(RSCore::stream_type::depth, RSCore::pixel_format::z16, depth_image, sample_set);
 
-    setPersonData(sample_set);
+    processFrame(sample_set);
 
     double now = (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
                   / 1000.00);
@@ -371,7 +371,11 @@ namespace realsense_person
     {
       last_publish_time_ = now;
       auto person_data = getPersonData();
-      if (person_data)
+      if (!person_data)
+      {
+        ROS_WARN_STREAM(nodelet_name_ << " - Could not get person data");
+      }
+      else
       {
         prepareMsgs(person_data, color_image);
       }
@@ -398,9 +402,9 @@ namespace realsense_person
   }
 
   /*
-   * Set Person Data.
+   * Process Frame.
    */
-  void PersonNodelet::setPersonData(RSCore::correlated_sample_set sample_set)
+  void PersonNodelet::processFrame(RSCore::correlated_sample_set sample_set)
   {
     std::unique_lock<std::mutex> lock(frame_lock_);
     auto status = pt_video_module_->process_sample_set_sync(&sample_set);
@@ -408,14 +412,6 @@ namespace realsense_person
     if (status != RSCore::status::status_no_error)
     {
       ROS_ERROR_STREAM(nodelet_name_ << " - Error while processing input frames: " << status);
-      person_data_ = nullptr;
-    }
-
-    person_data_ = pt_video_module_->QueryOutput();
-
-    if (!person_data_)
-    {
-      ROS_ERROR_STREAM(nodelet_name_ << " - No person data");
     }
   }
 
@@ -425,7 +421,7 @@ namespace realsense_person
   PersonModule::PersonTrackingData* PersonNodelet::getPersonData()
   {
     std::unique_lock<std::mutex> lock(frame_lock_);
-    return person_data_;
+    return pt_video_module_->QueryOutput();
   }
 
   /*
@@ -651,16 +647,25 @@ namespace realsense_person
   {
     ROS_INFO_STREAM(nodelet_name_ << " - Calling service: " << GET_TRACKING_ID_SERVICE);
     auto person_data = getPersonData();
-
-    int detected_person_cnt = person_data->QueryNumberOfPeople();
-    res.detected_person_count = detected_person_cnt;
-    for (int i = 0; i < detected_person_cnt; ++i)
+    if (!person_data)
     {
-      PersonModule::PersonTrackingData::Person* single_person_data =
-          person_data->QueryPersonData(PersonModule::PersonTrackingData::ACCESS_ORDER_BY_ID, i);
-      PersonModule::PersonTrackingData::PersonTracking* detection_data = single_person_data->QueryTracking();
-      int tracking_id = detection_data->QueryId();
-      res.tracking_ids.push_back(tracking_id);
+      res.status = -1;
+      res.status_desc = "Could not get person data";
+    }
+    else
+    {
+      res.status = 0;
+      res.status_desc = "Success";
+      int detected_person_cnt = person_data->QueryNumberOfPeople();
+      res.detected_person_count = detected_person_cnt;
+      for (int i = 0; i < detected_person_cnt; ++i)
+      {
+        PersonModule::PersonTrackingData::Person* single_person_data =
+            person_data->QueryPersonData(PersonModule::PersonTrackingData::ACCESS_ORDER_BY_ID, i);
+        PersonModule::PersonTrackingData::PersonTracking* detection_data = single_person_data->QueryTracking();
+        int tracking_id = detection_data->QueryId();
+        res.tracking_ids.push_back(tracking_id);
+      }
     }
     return true;
   }
@@ -676,14 +681,13 @@ namespace realsense_person
     if (!person_data)
     {
       res.status = -1;
-      res.status_desc = "Could not start tracking";
+      res.status_desc = "Could not get person_data";
     }
     else
     {
       tracking_id_ = req.tracking_id;
       pt_video_module_->QueryConfiguration()->QueryTracking()->Enable();
       pt_video_module_->QueryConfiguration()->QueryTracking()->EnableFaceLandmarks();
-      auto person_data = getPersonData();
       person_data->StartTracking(tracking_id_);
       res.status = 0;
       res.status_desc = "Started tracking person with tracking_id " + std::to_string(tracking_id_);
@@ -702,7 +706,7 @@ namespace realsense_person
     if (!person_data)
     {
       res.status = -1;
-      res.status_desc = "Could not stop tracking";
+      res.status_desc = "Could not get person data";
     }
     else
     {
@@ -725,23 +729,29 @@ namespace realsense_person
     if (!pt_video_module_->QueryConfiguration()->QueryRecognition()->IsEnabled())
     {
       res.status_desc = "Recognition Not Enabled";
-
     }
     else
     {
       auto person_data = getPersonData();
-      auto person = person_data->QueryPersonDataById(req.tracking_id);
-
-      if (!person)
+      if (!person_data)
       {
-        res.status_desc = "Tracking Id Not Found";
+        res.status = -1;
+        res.status_desc = "Could not get person data";
       }
       else
       {
-        int recognition_id = -1;
-        res.status = person->QueryRecognition()->RegisterUser(&recognition_id);
-        res.status_desc = REGISTRATION_DESC[res.status];
-        res.recognition_id = recognition_id;
+        auto person = person_data->QueryPersonDataById(req.tracking_id);
+        if (!person)
+        {
+          res.status_desc = "Tracking Id Not Found";
+        }
+        else
+        {
+          int recognition_id = -1;
+          res.status = person->QueryRecognition()->RegisterUser(&recognition_id);
+          res.status_desc = REGISTRATION_DESC[res.status];
+          res.recognition_id = recognition_id;
+        }
       }
     }
     return true;
@@ -764,22 +774,29 @@ namespace realsense_person
     else
     {
       auto person_data = getPersonData();
-      auto person = person_data->QueryPersonDataById(req.tracking_id);
-
-      if (!person)
+      if (!person_data)
       {
         res.status = -1;
-        res.status_desc = "Tracking Id Not Found";
-        res.recognition_id = -1;
-        res.confidence = -1.0;
+        res.status_desc = "Could not get person data";
       }
       else
       {
-        PersonModule::PersonTrackingData::RecognizerData result;
-        res.status = person->QueryRecognition()->RecognizeUser(&result);
-        res.status_desc = RECOGNITION_DESC[res.status];
-        res.recognition_id = result.recognitionId;
-        res.confidence = result.similarityScore;
+        auto person = person_data->QueryPersonDataById(req.tracking_id);
+        if (!person)
+        {
+          res.status = -1;
+          res.status_desc = "Tracking Id Not Found";
+          res.recognition_id = -1;
+          res.confidence = -1.0;
+        }
+        else
+        {
+          PersonModule::PersonTrackingData::RecognizerData result;
+          res.status = person->QueryRecognition()->RecognizeUser(&result);
+          res.status_desc = RECOGNITION_DESC[res.status];
+          res.recognition_id = result.recognitionId;
+          res.confidence = result.similarityScore;
+        }
       }
     }
     return true;
@@ -800,18 +817,25 @@ namespace realsense_person
     else
     {
       auto person_data = getPersonData();
-      auto person = person_data->QueryPersonDataById(req.tracking_id);
-
-      if (!person)
+      if (!person_data)
       {
         res.status = -1;
-        res.status_desc = "Tracking Id Not Found";
+        res.status_desc = "Could not get person data";
       }
       else
       {
-        res.status = person->QueryRecognition()->ReinforceUserRegistration(req.recognition_id,
-            PersonModule::PersonTrackingData::PersonRecognition::RegisterPolicyManualAdd);
-        res.status_desc = REGISTRATION_DESC[res.status];
+        auto person = person_data->QueryPersonDataById(req.tracking_id);
+        if (!person)
+        {
+          res.status = -1;
+          res.status_desc = "Tracking Id Not Found";
+        }
+        else
+        {
+          res.status = person->QueryRecognition()->ReinforceUserRegistration(req.recognition_id,
+              PersonModule::PersonTrackingData::PersonRecognition::RegisterPolicyManualAdd);
+          res.status_desc = REGISTRATION_DESC[res.status];
+        }
       }
     }
     return true;
