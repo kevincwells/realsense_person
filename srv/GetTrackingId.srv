@@ -1,4 +1,6 @@
 ---
+int32 status
+string status_desc
 uint32 detected_person_count
 uint32[] tracking_ids #list of tracking_ids of detected people
 

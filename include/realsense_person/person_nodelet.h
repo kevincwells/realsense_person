@@ -69,6 +69,7 @@
 
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/opencv.hpp>
+#include <mutex>
 
 
 namespace PersonModule = Intel::RealSense::PersonTracking;
@@ -107,7 +108,6 @@ namespace realsense_person
     message_filters::Connection image_connection_;
 
     RSCore::projection_interface* projection_interface_;
-    RSCore::correlated_sample_set sample_set_;
     std::unique_ptr<PersonModuleInterface::person_tracking_video_module_interface> pt_video_module_;
 
     ros::ServiceServer tracking_id_server_;
@@ -125,6 +125,7 @@ namespace realsense_person
     ros::Publisher tracking_image_pub_;
 
     boost::shared_ptr<dynamic_reconfigure::Server<realsense_person::person_paramsConfig>> dynamic_reconf_server_;
+    std::mutex frame_lock_;
 
     virtual bool getTrackingIdServiceHandler(realsense_person::GetTrackingId::Request &req,
         realsense_person::GetTrackingId::Response &res);
@@ -158,8 +159,9 @@ namespace realsense_person
     void subscribeToImageTopics();
     void imageCallback(const sensor_msgs::ImageConstPtr& color_image, const sensor_msgs::ImageConstPtr& depth_image);
     void generateSampleSet(RSCore::stream_type image_type, RSCore::pixel_format image_format,
-        const sensor_msgs::ImageConstPtr& image);
-    PersonModule::PersonTrackingData* processFrame();
+        const sensor_msgs::ImageConstPtr& image, RSCore::correlated_sample_set &sample_set);
+    void processFrame(RSCore::correlated_sample_set sample_set);
+    PersonModule::PersonTrackingData* getPersonData();
     void prepareMsgs(PersonModule::PersonTrackingData* person_data, const sensor_msgs::ImageConstPtr& color_image);
     Person preparePersonMsg(int tracking_id, PersonModule::PersonTrackingData::BoundingBox2D b_box,
         PersonModule::PersonTrackingData::PointCombined com);
