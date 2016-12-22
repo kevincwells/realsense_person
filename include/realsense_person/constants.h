@@ -37,8 +37,7 @@
 namespace realsense_person
 {
   // Default Constants.
-  const int COLOR_FPS = 30;
-  const int DEPTH_FPS = 30;
+  const int SUBSCRIBE_RATE = 30;
 
   const std::string COLOR_NAMESPACE = "color";
   const std::string COLOR_TOPIC = "image_raw";

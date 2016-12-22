@@ -86,15 +86,21 @@ namespace realsense_person
     void onInit();
 
   protected:
-
     ros::NodeHandle nh_;
     ros::NodeHandle pnh_;
     std::string nodelet_name_;
-    int color_fps_;
-    int depth_fps_;
     int tracking_id_;
+    int subscribe_rate_;
     int detection_rate_;
-    double last_publish_time_;
+    int tracking_rate_;
+
+    double current_time_;
+    double last_detection_time_;
+    double last_tracking_time_;
+    bool publish_detection_;
+    bool publish_detection_image_;
+    bool publish_tracking_;
+    bool publish_tracking_image_;
 
     std::unique_ptr<message_filters::Subscriber<sensor_msgs::CameraInfo>> color_caminfo_sub_;
     std::unique_ptr<message_filters::Subscriber<sensor_msgs::CameraInfo>> depth_caminfo_sub_;
@@ -154,7 +160,7 @@ namespace realsense_person
         const sensor_msgs::CameraInfoConstPtr& depth_caminfo);
     void getImageIntrinsics(const sensor_msgs::CameraInfoConstPtr& caminfo, RSCore::intrinsics& intrinsics);
     void getImageExtrinsics(const sensor_msgs::CameraInfoConstPtr& caminfo, RSCore::extrinsics& extrinsics);
-    void setModuleConfig(int image_type, int image_fps, RSCore::intrinsics intrinsics,
+    void setModuleConfig(int image_type, RSCore::intrinsics intrinsics,
         RSCore::video_module_interface::actual_module_config& module_config);
     void subscribeToImageTopics();
     void imageCallback(const sensor_msgs::ImageConstPtr& color_image, const sensor_msgs::ImageConstPtr& depth_image);
@@ -162,13 +168,14 @@ namespace realsense_person
         const sensor_msgs::ImageConstPtr& image, RSCore::correlated_sample_set &sample_set);
     void processFrame(RSCore::correlated_sample_set sample_set);
     PersonModule::PersonTrackingData* getPersonData();
-    void prepareMsgs(PersonModule::PersonTrackingData* person_data, const sensor_msgs::ImageConstPtr& color_image);
+    void prepareMsgs(PersonModule::PersonTrackingData* person_data, const sensor_msgs::ImageConstPtr& color_image,
+        double msg_received_time);
     Person preparePersonMsg(int tracking_id, PersonModule::PersonTrackingData::BoundingBox2D b_box,
         PersonModule::PersonTrackingData::PointCombined com);
     PersonFace preparePersonFaceMsg(int tracking_id, PersonModule::PersonTrackingData::PersonTracking* detection_data,
         PersonModule::PersonTrackingData::Person* single_person_data);
     PersonBody preparePersonBodyMsg(int tracking_id, PersonModule::PersonTrackingData::Person* single_person_data);
-    void preparePersonImageMsg(Person person_msg, cv_bridge::CvImagePtr& cv_ptr);
+    void prepareDetectionImageMsg(PersonDetection detection_msg, cv_bridge::CvImagePtr& cv_ptr);
     void prepareTrackingImageMsg(PersonTracking tracking_msg, cv_bridge::CvImagePtr& cv_ptr);
   };
 }
