@@ -28,9 +28,9 @@
   <arg name="subscribe_rate"    default="30" />
   <arg name="detection_rate"    default="30" />
   <arg name="tracking_rate"     default="30" />
+  <arg name="manager"           default="manager" />
 
   <group ns="$(arg camera)">
-    <arg name="manager"        default="manager" />
     <!-- Load manager -->
     <node pkg="nodelet" type="nodelet" name="$(arg manager)" args="manager" output="screen"/>
 
